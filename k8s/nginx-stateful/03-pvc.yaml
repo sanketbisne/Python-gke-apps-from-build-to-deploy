@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nginx-standalone-pvc
+  namespace: demo-app
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-pd
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nginx-statefulset
+  namespace: demo-app
+  labels:
+    app: nginx
+spec:
+  serviceName: "nginx-headless"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      serviceAccountName: nginx-sa
+      securityContext:
+        fsGroup: 101 # nginx user group in alpine
+        # Note: Running the standard nginx:1.27-alpine image entirely as non-root 
+        # out of the box (e.g. runAsNonRoot: true, runAsUser: 101) typically fails 
+        # because Nginx tries to bind to port 80 and write to /var/run/nginx.pid.
+        # For a truly non-root production deployment, you would either use an 
+        # unprivileged image (like nginxinc/nginx-unprivileged) or use a ConfigMap 
+        # to override Nginx's default paths and listen port. 
+        # We are setting fsGroup so mounted volumes have correct ownership.
+      initContainers:
+      - name: init-html
+        image: busybox:1.28
+        command: ['sh', '-c', 'echo "<h1>Initialization successful!</h1>" > /usr/share/nginx/html/index.html']
+        volumeMounts:
+        - name: nginx-data
+          mountPath: /usr/share/nginx/html
+      containers:
+      - name: nginx
+        image: nginx:1.27-alpine
+        ports:
+        - containerPort: 80
+          name: web
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        volumeMounts:
+        - name: nginx-data
+          mountPath: /usr/share/nginx/html
+  volumeClaimTemplates:
+  - metadata:
+      name: nginx-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "standard-pd"
+      resources:
+        requests:
+          storage: 1Gi
