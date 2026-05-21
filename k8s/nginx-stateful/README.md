@@ -111,3 +111,78 @@ kubectl auth can-i delete secrets \
   --as=system:serviceaccount:demo-app:nginx-sa \
   -n demo-app
 ```
+
+---
+
+## 4. Architecture Demonstration Guide
+
+This section is designed to visually demonstrate the core features of Stateful applications on Kubernetes, rather than simply standing up the deployment.
+
+### 4.1 The Architecture Overview (The "Why")
+Unlike standard stateless frontend applications (which use Deployments), we are building a foundation for a Stateful Application (like a database).
+
+- **StatefulSets:** Give us predictable pod names and sticky, persistent storage.
+- **Headless Services:** Give each pod its own personal DNS address instead of load balancing.
+- **RBAC:** Ensures if the application is hacked, the attacker can't read our cluster secrets.
+
+### 4.2 Interactive Demonstration Commands
+
+#### Step 1: Predictable Network Identity
+Run this command to view the running pods:
+```bash
+kubectl get pods -n demo-app
+```
+**Key Concept:** Notice the name of the pod: `nginx-statefulset-0`. If a standard Deployment was used, this would be a random hash like `nginx-75f8b9-x2z`. StatefulSets assign a strict index (0, 1, 2) which is critical for databases that require a primary/replica hierarchy.
+
+#### Step 2: Dynamic Provisioning (Storage)
+Run this command to explore the Persistent Volume Claims:
+```bash
+kubectl get pvc,pv -n demo-app
+```
+**Key Concept:** We did not manually create a disk in Google Cloud! This perfectly illustrates Dynamic Provisioning in action. Because we used a `volumeClaimTemplate` inside our StatefulSet pointing to the `standard-pd` StorageClass, Kubernetes automatically talked to GKE and provisioned a 1Gi disk for pod 0.
+
+#### Step 3: Proving Data Persistence
+This is the most impactful experiment. You will intentionally kill the pod to prove that both the data and identity survive.
+
+**A.** First, verify that data exists in the persistent storage (our init container placed an HTML file here):
+```bash
+kubectl exec -it nginx-statefulset-0 -n demo-app -- cat /usr/share/nginx/html/index.html
+```
+*(You will see the output: `<h1>Initialization successful!</h1>`)*
+
+**B.** Now, forcefully delete the pod!
+```bash
+kubectl delete pod nginx-statefulset-0 -n demo-app
+```
+
+**C.** Immediately watch the pod recreate:
+```bash
+kubectl get pods -n demo-app -w
+```
+**Key Concept:** Notice the pod comes back with the EXACT same name (`nginx-statefulset-0`), and automatically re-attaches itself to the exact same Persistent Volume. If you check the data again (by running the `kubectl exec` command from Step A), the data is perfectly intact! If this were a Deployment, the volume would likely be destroyed unless manually managed.
+
+#### Step 4: The Headless Service
+Run this command to view the exposed services:
+```bash
+kubectl get svc -n demo-app
+```
+**Key Concept:** Look at the `nginx-headless` service. Its Cluster-IP is set to `None`. While a normal service dynamically load-balances traffic, a headless service simply tells Kubernetes: 'Provide a DNS record so traffic can route directly to pod `nginx-statefulset-0` in the backend.' This is the networking mechanism clustered databases use to communicate with each other!
+
+#### Step 5: The Principle of Least Privilege (RBAC)
+Let's prove our security hardening works. What happens if an attacker compromises our Nginx container? Can they steal cluster secrets?
+
+Execute a test as the application's Service Account to see if it can list pods:
+```bash
+kubectl auth can-i list pods --as=system:serviceaccount:demo-app:nginx-sa -n demo-app
+```
+*(Output: yes)*
+
+Execute a test to see if it can delete or view secrets:
+```bash
+kubectl auth can-i delete secrets --as=system:serviceaccount:demo-app:nginx-sa -n demo-app
+```
+*(Output: no)*
+
+**Key Concept:** Because we bound a specific `Role` to our `ServiceAccount`, this pod is securely containerized. If compromised, the attacker is trapped with severely limited visibility, safeguarding the rest of the cluster.
+
+By walking through these steps, the fundamental purpose and utility of StatefulSets become incredibly clear.
